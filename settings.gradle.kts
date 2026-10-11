@@ -13,5 +13,5 @@ dependencyResolutionManagement {
         maven("https://jitpack.io")
     }
 }
-rootProject.name = "Zedge Bot"
+rootProject.name = "ZEDGE Bot"
 include(":app")

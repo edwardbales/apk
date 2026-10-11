@@ -5,11 +5,11 @@ plugins {
 }
 
 android {
-    namespace = "com.zedge.contentstudio"
+    namespace = "com.zedge.bot"
     compileSdk = 35
 
     defaultConfig {
-        applicationId = "com.zedge.contentstudio"
+        applicationId = "com.zedge.bot"
         minSdk = 26
         targetSdk = 35
         versionCode = 4
