@@ -1,0 +1,51 @@
+name: signtech_file_sharing
+description: "Signtech File Sharing — IP-based file sharing for Signtech Digital print house. Designer PCs send print files over LAN/WiFi to the Human Y-Jet or Challenger printer PC, which opens them in RIP software."
+publish_to: 'none'
+
+version: 1.27.2+35
+
+environment:
+  sdk: ^3.5.4
+  flutter: ">=3.24.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  cupertino_icons: ^1.0.8
+  file_picker: ^8.0.0
+  image: ^4.5.4
+  path: ^1.9.0
+  path_provider: ^2.1.2
+  shared_preferences: ^2.2.2
+  # Windows toast when a sent file turns Done (v1.26,
+  # suggestion 7). Pinned to 19.x: 18.x has no Windows
+  # implementation at all, and 20+ needs a newer Flutter
+  # than the shop toolchain (3.24.x). 19.x needs Flutter
+  # >=3.22, so it builds on 3.24.
+  flutter_local_notifications: ^19.3.1
+  # Per-role window size (v1.20): printer PCs open at 800x650 so the
+  # dashboard always shows the approved wide layout; designers keep
+  # the 430x740 portrait window. Pinned to 0.4.3 — the latest
+  # window_manager needs Flutter 3.50, the shop toolchain is 3.24.x.
+  window_manager: ^0.4.3
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^4.0.0
+
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/logo.png
+  fonts:
+    - family: Poppins
+      fonts:
+        - asset: assets/fonts/Poppins-Regular.ttf
+          weight: 400
+        - asset: assets/fonts/Poppins-Medium.ttf
+          weight: 500
+        - asset: assets/fonts/Poppins-SemiBold.ttf
+          weight: 600
+        - asset: assets/fonts/Poppins-Bold.ttf
+          weight: 700

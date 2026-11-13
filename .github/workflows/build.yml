@@ -1,0 +1,163 @@
+name: Build Signtech File Sharing (Windows EXE)
+
+# Builds Signtech File Sharing for Windows with Flutter (Dart).
+# Same language / toolchain as the user's TeamDrive workflow:
+# Flutter 3.24.x, windows-2022 runner, Inno Setup installer.
+#
+# Triggers on every push to main and on manual dispatch.
+# No WebView anywhere — 100% Flutter widgets, direct LAN API calls
+# (dart:io HttpServer on the Printer PC, HttpClient on Designer PC).
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  windows:
+    name: Build Windows EXE
+    # windows-2022 carries complete VS2019 + VS2022 installs with the C++
+    # workload — the combo Flutter 3.24's Windows build expects. windows-latest
+    # (2025) only ships VS2022 and trips CMake's VS2019 generator lookup.
+    runs-on: windows-2022
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # Fail fast with a clear message if this workflow is ever run
+      # in the wrong repo/folder (e.g. the Zedge Studio repo — its
+      # files would mix with Signtech's and analyze would fail with
+      # 100+ confusing errors). The Signtech project must live in
+      # its own clean folder/repo.
+      - name: Guard - only run in the Signtech repo
+        shell: pwsh
+        run: |
+          if (Test-Path lib/gemini_api.dart) { throw "WRONG REPO: this folder has Zedge Studio files (lib/gemini_api.dart). Run this workflow only in the Signtech File Sharing repo." }
+          $name = (Get-Content pubspec.yaml | Select-String '^name:' | ForEach-Object { ($_ -split ':')[1].Trim() })
+          if ($name -ne 'signtech_file_sharing') { throw "WRONG REPO: pubspec name is '$name', expected 'signtech_file_sharing'. Run this workflow only in the Signtech File Sharing repo." }
+          Write-Host "Repo check OK: signtech_file_sharing"
+
+      # Prove WHICH code this run actually checked out: print the version
+      # from pubspec.yaml and stop loudly if it is not this release.
+      # (Three runs in a row failed with the SAME old errors even after a
+      # fresh upload to a new repo — the checkout kept holding old code.
+      # This step makes the log itself say which version ran, so nobody
+      # has to guess whether the new ZIP reached the repo.)
+      - name: Verify - this run must be v1.21.0 code
+        shell: pwsh
+        run: |
+          $line = (Get-Content pubspec.yaml | Select-String '^version:').Line
+          $version = ($line -split ':', 2)[1].Trim()
+          Write-Host "pubspec version in this checkout: $version"
+          if ($version -ne '1.27.2+35') { throw "OLD CODE: this checkout is version '$version', not 1.27.2+35. The v1.21.0 ZIP did not reach this repo — check pubspec.yaml on GitHub (it must say 1.27.2+35), re-upload the v1.21.0 ZIP and push again." }
+          if (Select-String -Path lib/theme.dart -Pattern 'CardThemeData\(' -Quiet) { throw "OLD CODE: lib/theme.dart still contains CardThemeData( — the fix is missing from this checkout." }
+          if (-not (Test-Path 'packaging/windows/wizard_image.bmp')) { throw "MISSING: packaging/windows/wizard_image.bmp — the installer wizard image is not in this checkout." }
+          if (-not (Test-Path 'packaging/windows/wizard_small.bmp')) { throw "MISSING: packaging/windows/wizard_small.bmp — the installer wizard small image is not in this checkout." }
+          Write-Host "Version check OK: v1.27.2 code confirmed."
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: "3.24.x"
+          channel: stable
+          cache: true
+
+      - name: Enable Windows desktop
+        run: flutter config --enable-windows-desktop
+
+      - name: Flutter doctor
+        run: flutter doctor -v
+
+      # The repo ships only the Dart side (lib/, pubspec.yaml). Generate the
+      # Windows platform folder with the official "add a platform" flow so the
+      # exact Flutter version in CI produces its own version-matched CMake
+      # project. Existing lib/, pubspec.yaml and assets are left untouched.
+      - name: Generate Windows platform files
+        run: flutter create --platforms=windows --org com.signtech --project-name signtech_file_sharing .
+
+      # Smaller default window: Flutter's template opens at 1280x720.
+      # Open at 430x740 instead — a tall portrait window like
+      # SHAREit (measured from the user's screenshot: ~430px wide,
+      # nearly full screen height on a 1366x768 shop PC). The
+      # template shows the window with SW_SHOWNORMAL (never
+      # maximized), so the size in main.cpp is exactly the size
+      # it opens at.
+      # The window stays resizable and maximizable — this is only the
+      # size it opens at. Fails loudly if the template ever changes
+      # the default line, so a big window can never slip through.
+      # NOTE (v1.20): this is the INITIAL size only. main() resizes
+      # the window per role with window_manager
+      # (lib/services/window_size.dart): printer PCs grow to 800x650
+      # so the dashboard always shows the wide layout, designers
+      # stay at 430x740.
+      - name: Smaller default window size (430x740)
+        shell: pwsh
+        run: |
+          $path = "windows/runner/main.cpp"
+          $text = Get-Content $path -Raw
+          if ($text -notmatch "Win32Window::Size size\(1280, 720\);") {
+            throw "main.cpp does not contain the expected 1280x720 default — template changed, update this step"
+          }
+          $text = $text -replace "Win32Window::Size size\(1280, 720\);", "Win32Window::Size size(430, 740);"
+          Set-Content $path $text -NoNewline
+          Select-String -Path $path -Pattern "Win32Window::Size size"
+
+      # flutter create also drops in a default counter-app widget test that
+      # references a non-existent MyApp class — it breaks analyze, delete it.
+      - name: Remove default widget test
+        run: rm -Force test/widget_test.dart
+
+      # Use the user's printer logo as the Windows app icon (EXE + taskbar +
+      # Start menu) instead of Flutter's default icon.
+      - name: Use the Signtech logo as the Windows app icon
+        shell: pwsh
+        run: Copy-Item packaging/windows/app_icon.ico windows/runner/resources/app_icon.ico -Force
+
+      - name: Get dependencies
+        run: flutter pub get
+
+      - name: Analyze
+        run: flutter analyze --no-fatal-infos --no-fatal-warnings
+
+      - name: Run tests
+        run: flutter test
+
+      # Set up the MSVC compiler environment (INCLUDE/LIB/PATH) before CMake
+      # runs — the standard prerequisite for Flutter Windows builds on CI.
+      - name: Set up MSVC developer environment
+        uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Build release EXE
+        run: flutter build windows --release
+
+      - name: Install Inno Setup
+        shell: pwsh
+        run: choco install innosetup -y --no-progress
+
+      - name: Build Windows installer (setup.exe)
+        shell: pwsh
+        run: |
+          $ver = (Get-Content pubspec.yaml | Select-String '^version:' | ForEach-Object { ($_ -split ':')[1].Trim().Split('+')[0] })
+          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" "/DAPP_VERSION=$ver" packaging/windows/signtech_file_sharing.iss
+
+      - name: Upload Windows installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: signtech-file-sharing-windows-installer
+          path: installer/SigntechFileSharing-Setup-*.exe
+          if-no-files-found: error
+
+      - name: Zip the Windows release folder (portable)
+        shell: pwsh
+        run: |
+          $ver = (Get-Content pubspec.yaml | Select-String '^version:' | ForEach-Object { ($_ -split ':')[1].Trim().Split('+')[0] })
+          Compress-Archive -Path build/windows/x64/runner/Release/* -DestinationPath "signtech-file-sharing-windows-portable-$ver.zip" -Force
+
+      - name: Upload Windows portable ZIP
+        uses: actions/upload-artifact@v4
+        with:
+          name: signtech-file-sharing-windows-portable
+          path: signtech-file-sharing-windows-portable-*.zip
+          if-no-files-found: error
